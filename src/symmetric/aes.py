@@ -11,3 +11,6 @@ def encrypt(plaintext, key):
 def decrypt(ciphertext, key):
     decryptor = Cipher(algorithms.AES(key), modes.CTR(ciphertext[:16]), backend=default_backend()).decryptor()
     return decryptor.update(ciphertext[16:]) + decryptor.finalize()
+
+def generate_key():
+    return os.urandom(16)

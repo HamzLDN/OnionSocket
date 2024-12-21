@@ -1,7 +1,15 @@
 import socket
+from src.symmetric import aes
+
 class TCPClient:
     def __init__(self, host="localhost", port=10001):
         self.server_address = (host, port)
+
+    def setup(self):
+        pass
+
+    def establish_secure_connection(self):
+        pass
 
     def start(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:

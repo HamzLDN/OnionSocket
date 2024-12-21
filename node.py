@@ -1,6 +1,6 @@
 import socket
 import threading
-import src.symmetric.aes
+from src.symmetric import aes
 
 class NextRelay:
     def __init__(self, ip, port):
@@ -54,6 +54,12 @@ class TCPServer:
             except Exception as e:
                 print(e)
                 break
+            
+    def setup(self):
+        pass
+
+    def establish_secure_connection(self):
+        pass
 
     def start(self):
         try:
