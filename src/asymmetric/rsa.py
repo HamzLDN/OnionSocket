@@ -9,7 +9,7 @@ def generate_rsa_keys(key_size=2048):
     private_key = rsa.generate_private_key(public_exponent=65537,key_size=key_size,backend=default_backend())
     return private_key, private_key.public_key()
 
-def encrypt_message(public_key, plaintext):
+def encrypt_message(public_key, plaintext) -> bytes:
     return public_key.encrypt(
         plaintext.encode(),
         padding.OAEP(
@@ -27,3 +27,13 @@ def decrypt_message(private_key, ciphertext):
             label=None
         )
     ).decode()
+
+def export_public_key(public_key):
+    return public_key.public_bytes(encoding=serialization.Encoding.PEM,format=serialization.PublicFormat.SubjectPublicKeyInfo)
+
+def export_private_key(private_key):
+   return private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption()
+    )

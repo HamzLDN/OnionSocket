@@ -1,6 +1,7 @@
 import socket
 import threading
 from src.symmetric import aes
+from src.asymmetric import rsa
 
 class NextRelay:
     def __init__(self, ip, port):
@@ -20,7 +21,8 @@ class TCPServer:
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.bind(self.server_address)
         self.server_socket.listen(5)
-
+        self.encryption_type = {b'\x21': aes}
+        self.enc = None
         print(f"TCP Server listening on {host}:{port}")
 
     def next_node(self, sock, next_relay):
@@ -54,12 +56,15 @@ class TCPServer:
             except Exception as e:
                 print(e)
                 break
-            
-    def setup(self):
-        pass
 
-    def establish_secure_connection(self):
-        pass
+    def setup(self, sock):
+        data = sock.recv(1)
+        if data in self.encryption_type:
+            self.enc = self.encryption_type[data]
+            self.establish_secure_connection(sock)
+    def establish_secure_connection(self, sock):
+        private_key, public_key = rsa.generate_rsa_keys()
+        sock.send(public_key)
 
     def start(self):
         try:
@@ -67,6 +72,7 @@ class TCPServer:
                 print("Waiting for a connection...")
                 client_socket, client_address = self.server_socket.accept()
                 next_relay = NextRelay("localhost", 10002)
+                self.setup(client_socket)
                 if next_relay.connect():
                     threading.Thread(target=self.next_node, args=(client_socket, next_relay,)).start()
                     threading.Thread(target=self.back_node, args=(client_socket, next_relay,)).start()
