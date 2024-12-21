@@ -30,6 +30,26 @@ def decrypt_message(private_key, ciphertext):
         )
     )
 
+def sign_message(private_key, message): # message signature will be 256 long
+    msg_hash = hashes.Hash(hashes.SHA256()) 
+    msg_hash.update(message)
+    return private_key.sign(
+        msg_hash.finalize(),
+        padding.PKCS1v15(),
+        hashes.SHA256()
+    )
+
+def verify_signature(public_key, message, signature):
+    # hashing the msg
+    msg_hash = hashes.Hash(hashes.SHA256())
+    msg_hash.update(message)
+    try:
+        #verification with public key
+        public_key.verify(signature,msg_hash.finalize(),padding.PKCS1v15(),hashes.SHA256())
+        return True
+    except Exception as e:
+        return False
+
 def export_public_key(public_key):
     return public_key.public_bytes(encoding=serialization.Encoding.PEM,format=serialization.PublicFormat.SubjectPublicKeyInfo)
 

@@ -26,7 +26,7 @@ class TCPServer:
         self.server_socket.listen(5)
         self.encryption_type = {'\x21': aes}
         self.coms = tcp_enhancer.coms()
-        self.enc = None
+        self.client_public_key = None
         print(f"TCP Server listening on {host}:{port}")
 
     def next_node(self, sock, next_relay):
@@ -46,7 +46,6 @@ class TCPServer:
     def back_node(self, sock, next_relay):
         
         # We will get data from the next node and send it back to the connected client
-
         while True:
             try:
                 data = next_relay.recv(sock)
@@ -70,9 +69,8 @@ class TCPServer:
     def establish_secure_connection(self, sock):
         private_key, public_key = rsa.generate_rsa_keys()
         self.coms.send(sock, rsa.export_public_key(public_key))
-        data = self.coms.recv(sock)
-        symmetric_key = rsa.decrypt_message(private_key, data)
-        print("Symmetric key is",symmetric_key)
+        self.client_public_key = rsa.load_public_key(self.coms.recv(sock))
+        self.coms.send_enc(sock, b"Hello", self.client_public_key, private_key)
 
     def start(self):
         try:

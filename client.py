@@ -2,6 +2,7 @@ import socket
 from src.symmetric import aes
 from src.asymmetric import rsa
 from src import tcp_enhancer
+
 class TCPClient:
     def __init__(self, host="localhost", port=10001):
         self.server_address = (host, port)
@@ -14,9 +15,10 @@ class TCPClient:
             self.establish_secure_connection(sock)
 
     def establish_secure_connection(self, sock):
-        data = self.coms.recv(sock)
-        server_public_key = rsa.load_public_key(data)
-        self.coms.send(sock, rsa.encrypt_message(server_public_key, aes.generate_key()))
+        private_key, public_key = rsa.generate_rsa_keys()
+        self.coms.send(sock, rsa.export_public_key(public_key))
+        server_public_key = rsa.load_public_key(self.coms.recv(sock))
+        print(self.coms.recv_enc(sock, server_public_key, private_key))
 
     def start(self, enc="AES"):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
