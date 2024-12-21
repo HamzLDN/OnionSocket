@@ -11,7 +11,7 @@ def generate_rsa_keys(key_size=2048):
 
 def encrypt_message(public_key, plaintext) -> bytes:
     return public_key.encrypt(
-        plaintext.encode(),
+        plaintext,
         padding.OAEP(
             mgf=padding.MGF1(algorithm=hashes.SHA256()),
             algorithm=hashes.SHA256(),
@@ -19,6 +19,8 @@ def encrypt_message(public_key, plaintext) -> bytes:
         )
     )
 
+def load_public_key(public_key):
+    return serialization.load_pem_public_key(public_key,backend=default_backend())
 
 def decrypt_message(private_key, ciphertext):
     return private_key.decrypt(ciphertext, padding.OAEP(
@@ -26,7 +28,7 @@ def decrypt_message(private_key, ciphertext):
             algorithm=hashes.SHA256(),
             label=None
         )
-    ).decode()
+    )
 
 def export_public_key(public_key):
     return public_key.public_bytes(encoding=serialization.Encoding.PEM,format=serialization.PublicFormat.SubjectPublicKeyInfo)

@@ -12,5 +12,5 @@ def decrypt(ciphertext, key):
     decryptor = Cipher(algorithms.AES(key), modes.CTR(ciphertext[:16]), backend=default_backend()).decryptor()
     return decryptor.update(ciphertext[16:]) + decryptor.finalize()
 
-def generate_key():
+def generate_key() -> bytes:
     return os.urandom(16)
