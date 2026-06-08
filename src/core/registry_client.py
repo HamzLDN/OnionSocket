@@ -18,6 +18,7 @@ def _connect(registry_host, registry_port, timeout=2.0):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     sock.connect((registry_host, registry_port))
+    tcp_enhancer.set_nodelay(sock)
     return sock
 
 

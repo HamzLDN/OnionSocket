@@ -21,9 +21,16 @@ __all__ = ["Directory", "create", "listen"]
 
 
 class Directory:
-    def __init__(self, host=DEFAULT_BIND_HOST, port=DEFAULT_REGISTRY_PORT):
+    def __init__(
+        self,
+        host=DEFAULT_BIND_HOST,
+        port=DEFAULT_REGISTRY_PORT,
+        *,
+        verbose=False,
+    ):
         self.host = host
         self.port = port
+        self.verbose = verbose
         self.coms = tcp_enhancer.coms()
         self.entries = {}
         self.lock = threading.Lock()
@@ -32,7 +39,16 @@ class Directory:
         self.server_socket.bind((host, port))
         self.server_socket.listen(20)
         self._running = False
-        print(f"Directory {host}:{port}")
+        self._log(f"Directory ready on {host}:{port}")
+
+    def _log(self, message: str):
+        stamp = time.strftime("%H:%M:%S")
+        print(f"[{stamp}] {message}")
+
+    def _format_peer(self, addr):
+        if not addr:
+            return "unknown"
+        return f"{addr[0]}:{addr[1]}"
 
     def close(self):
         self._running = False
@@ -40,12 +56,12 @@ class Directory:
 
     def listen(self):
         self._running = True
-        print(f"Listening on {self.host}:{self.port}")
+        self._log(f"Listening on {self.host}:{self.port}")
         while self._running:
-            client_socket, _ = self.server_socket.accept()
+            client_socket, addr = self.server_socket.accept()
             threading.Thread(
                 target=self._handle_connection_safe,
-                args=(client_socket,),
+                args=(client_socket, addr),
                 daemon=True,
             ).start()
 
@@ -60,6 +76,11 @@ class Directory:
             if now - entry["last_seen"] > REGISTRY_TTL_SECONDS
         ]
         for key in stale:
+            entry = self.entries[key]
+            self._log(
+                f"Expired {entry['type']} {entry['host']}:{entry['port']} "
+                f"(no heartbeat for {REGISTRY_TTL_SECONDS}s)"
+            )
             del self.entries[key]
 
     def _normalize_type(self, service_type):
@@ -93,9 +114,9 @@ class Directory:
                 "public_key": public_key,
                 "last_seen": time.time(),
             }
-        print(f"Registered {service_type} {host}:{port}")
+        self._log(f"Registered {service_type} {host}:{port}")
 
-    def heartbeat(self, payload):
+    def heartbeat(self, payload, *, peer=None):
         service_type = self._normalize_type(payload.get("type"))
         host = payload["host"]
         port = int(payload["port"])
@@ -103,6 +124,16 @@ class Directory:
         with self.lock:
             if key in self.entries:
                 self.entries[key]["last_seen"] = time.time()
+                if self.verbose:
+                    self._log(
+                        f"Heartbeat {service_type} {host}:{port} "
+                        f"from {self._format_peer(peer)}"
+                    )
+            elif self.verbose:
+                self._log(
+                    f"Heartbeat for unknown {service_type} {host}:{port} "
+                    f"from {self._format_peer(peer)}"
+                )
 
     def list_active(self):
         with self.lock:
@@ -123,29 +154,50 @@ class Directory:
         servers.sort(key=lambda item: (item["host"], item["port"]))
         return {"nodes": nodes, "servers": servers}
 
-    def handle_connection(self, sock):
+    def _log_listing(self, listing, *, peer=None):
+        nodes = listing["nodes"]
+        servers = listing["servers"]
+        relay_ports = ", ".join(str(item["port"]) for item in nodes) or "none"
+        exit_ports = ", ".join(str(item["port"]) for item in servers) or "none"
+        self._log(
+            f"List request from {self._format_peer(peer)} -> "
+            f"{len(nodes)} relay(s) [{relay_ports}], "
+            f"{len(servers)} exit(s) [{exit_ports}]"
+        )
+
+    def handle_connection(self, sock, addr=None):
         tag = self.coms.recv(sock)
         if tag is None:
             return
         if tag == REGISTRY_REGISTER:
             raw = self.coms.recv(sock)
             if raw:
-                self.register(json.loads(raw.decode("utf-8")))
+                payload = json.loads(raw.decode("utf-8"))
+                self.register(payload)
+                if self.verbose:
+                    self._log(
+                        f"Register request from {self._format_peer(addr)} "
+                        f"for {payload.get('type')} {payload.get('host')}:{payload.get('port')}"
+                    )
             return
         if tag == REGISTRY_HEARTBEAT:
             raw = self.coms.recv(sock)
             if raw:
-                self.heartbeat(json.loads(raw.decode("utf-8")))
+                self.heartbeat(json.loads(raw.decode("utf-8")), peer=addr)
             return
         if tag == REGISTRY_LIST:
-            payload = json.dumps(self.list_active()).encode("utf-8")
+            listing = self.list_active()
+            self._log_listing(listing, peer=addr)
+            payload = json.dumps(listing).encode("utf-8")
             self.coms.send(sock, payload)
+            return
+        self._log(f"Unknown request tag {tag!r} from {self._format_peer(addr)}")
 
-    def _handle_connection_safe(self, sock):
+    def _handle_connection_safe(self, sock, addr):
         try:
-            self.handle_connection(sock)
+            self.handle_connection(sock, addr)
         except Exception as e:
-            print(f"directory connection error: {e}")
+            self._log(f"Connection error from {self._format_peer(addr)}: {e}")
         finally:
             sock.close()
 
@@ -161,8 +213,9 @@ def create(
     *,
     host=DEFAULT_BIND_HOST,
     port=DEFAULT_REGISTRY_PORT,
+    verbose=False,
 ) -> Directory:
-    return Directory(host=host, port=port)
+    return Directory(host=host, port=port, verbose=verbose)
 
 
 def listen(directory: Directory):
@@ -170,13 +223,18 @@ def listen(directory: Directory):
 
 
 def from_args(args) -> Directory:
-    return create(host=args.host, port=args.port)
+    return create(host=args.host, port=args.port, verbose=args.verbose)
 
 
 def main():
     parser = argparse.ArgumentParser(description="OnionSocket directory server")
     parser.add_argument("--host", default=DEFAULT_BIND_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_REGISTRY_PORT)
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="log heartbeats and register request sources",
+    )
     args = parser.parse_args()
     listen(from_args(args))
 

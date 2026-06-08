@@ -6,11 +6,13 @@ from src.core.asymmetric import rsa
 from src.core.onion import HOP_SERVER, format_peel_report, peel_layer
 from src.core.protocol import (
     CLIENT_ONION,
+    CONNECT_TIMEOUT,
     DEFAULT_BIND_HOST,
     DEFAULT_HOST,
     DEFAULT_REGISTRY_PORT,
     PROBE,
     PROBE_KEY,
+    RECV_TIMEOUT,
     RELAY,
     SERVICE_RELAY,
     resolve_advertise_host,
@@ -28,7 +30,10 @@ class NextHop:
         self.coms = tcp_enhancer.coms()
 
     def connect(self):
+        self.client_socket.settimeout(CONNECT_TIMEOUT)
         self.client_socket.connect(self.host)
+        tcp_enhancer.set_nodelay(self.client_socket)
+        self.client_socket.settimeout(RECV_TIMEOUT)
         return True
 
     def send(self, msg):
@@ -126,6 +131,8 @@ class RelayNode:
                 break
 
     def start_forwarding(self, client_sock, next_hop, conn_id: int):
+        tcp_enhancer.set_nodelay(client_sock)
+        client_sock.settimeout(RECV_TIMEOUT)
         threading.Thread(
             target=self.next_node,
             args=(client_sock, next_hop, conn_id),
@@ -152,15 +159,17 @@ class RelayNode:
         hop_type, host, port, inner = peel_layer(self.private_key, layer_blob)
         self.log_peel(hop_type, host, port, inner)
 
+        target = "exit" if hop_type == HOP_SERVER else "relay"
+        self.stats.event(f"Connecting to next {target} {host}:{port}...")
         next_hop = NextHop(host, port)
         try:
             next_hop.connect()
         except OSError as e:
-            target = "exit" if hop_type == HOP_SERVER else "relay"
             self.stats.event(f"Next hop unreachable ({target}) {host}:{port}: {e}")
-            sock.close()
+            client_sock.close()
             self.stats.close_connection(conn_id)
             return
+        self.stats.event(f"Connected to next {target} {host}:{port}")
 
         if hop_type == HOP_SERVER:
             if inner:
@@ -249,6 +258,7 @@ class RelayNode:
                     continue
                 except OSError:
                     break
+                tcp_enhancer.set_nodelay(client_socket)
                 threading.Thread(
                     target=self.handle_connection,
                     args=(client_socket, addr),

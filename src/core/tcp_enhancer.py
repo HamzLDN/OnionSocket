@@ -1,4 +1,13 @@
+import socket
 import struct
+
+
+def set_nodelay(sock):
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError:
+        pass
+    return sock
 
 
 class coms:

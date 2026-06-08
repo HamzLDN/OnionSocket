@@ -4,18 +4,17 @@ from src.core.discovery import format_network_listing
 
 
 def main():
-    # server_port = exit node (exit.py), not server.py
+    # server_port = the port your server.py (or exit.py) is running on
     s = client.create(
         network_host="192.168.0.2",
         server_port=10004,
-        nodes=3,
     )
 
-    nodes, server = s.load_network()
-    print(format_network_listing(nodes, server))
-    print()
-
     try:
+        nodes, server = s.prepare_network()
+        print(format_network_listing(nodes, server))
+        print(f"Using {len(nodes)} live relays per circuit (random order each message)")
+        print()
         for text in ("hello", "second message"):
             print(f"You: {text}")
             replies = client.send(s, text.encode("utf-8"))

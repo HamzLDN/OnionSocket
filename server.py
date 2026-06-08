@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
+import argparse
+
+from src.core.protocol import DEFAULT_HOST, DEFAULT_REGISTRY_PORT
 from src.server import (
     ClientDisconnected,
     accept,
     close,
-    create,
+    create_exit_node,
     format_sessions,
     listen,
     receive,
@@ -12,7 +15,28 @@ from src.server import (
 
 
 def main():
-    srv = create(host="0.0.0.0", port=10004, quiet=True)
+    parser = argparse.ArgumentParser(
+        description="OnionSocket server (the destination your client reaches through the onion circuit)"
+    )
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--advertise-host", default=None)
+    parser.add_argument("--port", type=int, default=10004)
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--registry-host", default=DEFAULT_HOST)
+    parser.add_argument("--registry-port", type=int, default=DEFAULT_REGISTRY_PORT)
+    parser.add_argument("--no-registry", action="store_true")
+    args = parser.parse_args()
+
+    srv = create_exit_node(
+        host=args.host,
+        port=args.port,
+        verbose=args.verbose,
+        advertise_host=args.advertise_host,
+        registry_host=args.registry_host,
+        registry_port=args.registry_port,
+        register=not args.no_registry,
+        quiet=True,
+    )
     listen(srv)
     print(f"Listening on {srv.host}:{srv.port}")
     if srv.host in ("0.0.0.0", "::"):

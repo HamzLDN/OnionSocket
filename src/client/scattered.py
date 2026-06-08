@@ -1,15 +1,15 @@
+import os
 import queue
 import socket
 import threading
+import time
 
 from src.core import tcp_enhancer
 from src.core.asymmetric import rsa
 from src.core.discovery import (
-    dedupe_nodes_by_port,
     discover_network,
     enrich_chain_with_pubkeys,
     enrich_server_with_pubkey,
-    resolve_live_exit,
     select_random_relay_chain,
     select_relay_chain,
 )
@@ -23,11 +23,13 @@ from src.core.onion import build_onion
 from src.core.protocol import (
     CLIENT_CLOSE,
     CLIENT_ONION,
+    CONNECT_TIMEOUT,
     DEFAULT_HOST,
     DEFAULT_REGISTRY_PORT,
     DEFAULT_SCAN_END,
     DEFAULT_SCAN_START,
     MIN_RELAY_NODES,
+    RECV_TIMEOUT,
 )
 from src.core.secure_transport import unpack_server_replies
 
@@ -85,37 +87,43 @@ class Scattered:
             scan_start=self.scan_start,
             scan_end=self.scan_end,
             exit_port=self.server_port,
+            use_scan=not self.use_registry,
         )
-        if self.server_host is not None and self.server_port is not None:
-            explicit = {"host": self.server_host, "port": self.server_port}
-            if server and int(server.get("port", -1)) == self.server_port:
-                if server.get("public_key_pem"):
-                    explicit["public_key_pem"] = server["public_key_pem"]
-            live = resolve_live_exit(
-                explicit, prefer_host=self.server_host or self.scan_host
-            )
-            if live is None and server is not None:
-                live = server
-            if live is None:
-                raise RuntimeError(
-                    f"exit node not reachable at {self.server_host}:{self.server_port} "
-                    f"(is exit.py running on that port?)"
-                )
-            server = live
-        elif server is None:
+        if server is None:
             raise RuntimeError(
-                "no exit node found on the network (start exit.py first)"
+                "no exit node found in registry (start exit.py first)"
             )
-        prefer = server["host"]
-        nodes = dedupe_nodes_by_port(nodes, prefer)
+        if self.server_host is not None:
+            server = {**server, "host": self.server_host}
+        if self.server_port is not None and int(server["port"]) != self.server_port:
+            raise RuntimeError(
+                f"registry has no exit on port {self.server_port} "
+                f"(found {server['port']} instead — restart exit.py on {self.server_port})"
+            )
+        if len(nodes) < self.min_nodes:
+            raise RuntimeError(
+                f"registry has {len(nodes)} relays, need at least {self.min_nodes}"
+            )
         return nodes, server
+
+    def _timing(self):
+        return os.environ.get("ONION_TIMING", "1") != "0"
 
     def prepare_network(self):
         if self._nodes_cache is not None and self._server_info is not None:
             return self._nodes_cache, self._server_info
+        timing = self._timing()
+        t0 = time.perf_counter()
         nodes, server = self.load_network()
+        t1 = time.perf_counter()
         self._nodes_cache = enrich_chain_with_pubkeys(nodes)
         self._server_info = enrich_server_with_pubkey(server)
+        t2 = time.perf_counter()
+        if timing:
+            print(
+                f"[timing] discovery {(t1 - t0) * 1000:.0f}ms "
+                f"(registry+live probes), pubkeys {(t2 - t1) * 1000:.0f}ms"
+            )
         return self._nodes_cache, self._server_info
 
     def connect(self):
@@ -133,6 +141,7 @@ class Scattered:
         self._chain = [entry] + hops
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.connect((entry["host"], entry["port"]))
+        tcp_enhancer.set_nodelay(self._sock)
         self._onion_sent = False
         self._active = True
         self._insecure_queue = queue.Queue()
@@ -233,11 +242,25 @@ class Scattered:
         )
         onion_blob = build_onion(full_chain, server_info, sealed)
 
+        timing = self._timing() and data != CLIENT_CLOSE
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(CONNECT_TIMEOUT)
+            tc0 = time.perf_counter()
             sock.connect((entry["host"], entry["port"]))
+            tc1 = time.perf_counter()
+            tcp_enhancer.set_nodelay(sock)
+            sock.settimeout(RECV_TIMEOUT)
             self.coms.send(sock, CLIENT_ONION)
             self.coms.send(sock, onion_blob)
+            ts = time.perf_counter()
             reply_sealed = self.coms.recv(sock)
+            tr = time.perf_counter()
+        if timing:
+            print(
+                f"[timing] entry connect {(tc1 - tc0) * 1000:.0f}ms, "
+                f"circuit+reply {(tr - ts) * 1000:.0f}ms "
+                f"(entry {entry['host']}:{entry['port']}, {len(full_chain)} hops)"
+            )
 
         body = self._decrypt_reply(reply_sealed, secure=True)
         return unpack_server_replies(body)

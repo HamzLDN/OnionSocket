@@ -164,6 +164,7 @@ class ExitServer:
         if not self._listening:
             raise RuntimeError("call listen() before accept()")
         client_socket, addr = self.server_socket.accept()
+        tcp_enhancer.set_nodelay(client_socket)
         conn_id = self._next_conn_id
         self._next_conn_id += 1
         stats_id = self.stats.open_connection(addr, "client")

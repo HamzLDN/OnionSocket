@@ -133,7 +133,7 @@ Each message uses a **new random circuit** (secure mode). The server still recog
 ```python
 from src import client
 
-s = client.create(nodes=3)
+s = client.create()  # uses all relays from registry
 
 replies = client.send(s, b"hello")
 for reply in replies:
@@ -196,11 +196,10 @@ On the **Windows** client, point at the Mac's LAN IP for **all** discovery — n
 s = client.create(
     network_host="192.168.1.100",  # Mac LAN IP
     server_port=10004,
-    nodes=3,
 )
 ```
 
-`network_host` sets the registry, port scan, and exit lookup to that machine. Setting only `server_host` is not enough — relays were previously searched on `localhost`.
+`network_host` points the client at the Mac's directory registry (port 10000). Relays and the exit are fetched from there — no port scanning.
 
 **Checklist if it still fails:**
 

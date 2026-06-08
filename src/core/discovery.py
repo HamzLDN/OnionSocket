@@ -1,9 +1,13 @@
+import os
 import random
 import socket
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 from src.core import tcp_enhancer
 from src.core.asymmetric import rsa
 from src.core.protocol import (
+    CONNECT_TIMEOUT,
     DEFAULT_HOST,
     DEFAULT_REGISTRY_PORT,
     DEFAULT_SCAN_END,
@@ -11,16 +15,22 @@ from src.core.protocol import (
     MIN_RELAY_NODES,
     PROBE,
     PROBE_KEY,
+    PROBE_TIMEOUT,
 )
 from src.core.registry_client import list_services
 
 
-def probe_port(host, port, timeout=0.8):
+def _is_local_host(host):
+    return host in (None, "", "localhost", "127.0.0.1", "::1")
+
+
+def probe_port(host, port, timeout=PROBE_TIMEOUT):
     coms = tcp_enhancer.coms()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     try:
         sock.connect((host, port))
+        tcp_enhancer.set_nodelay(sock)
         coms.send(sock, PROBE)
         reply = coms.recv(sock)
         if not reply:
@@ -42,6 +52,7 @@ def fetch_pubkey(host, port, timeout=0.5):
     sock.settimeout(timeout)
     try:
         sock.connect((host, port))
+        tcp_enhancer.set_nodelay(sock)
         coms.send(sock, PROBE_KEY)
         pem = coms.recv(sock)
         if not pem:
@@ -122,10 +133,85 @@ def _merge_nodes(*lists):
 
 def _probe_hosts(host, prefer_host=None):
     hosts = []
-    for candidate in (prefer_host, "localhost", "127.0.0.1", host, DEFAULT_HOST):
+    for candidate in (prefer_host, host):
         if candidate and candidate not in hosts:
             hosts.append(candidate)
+    if _is_local_host(prefer_host) or _is_local_host(host):
+        for candidate in ("localhost", "127.0.0.1", DEFAULT_HOST):
+            if candidate not in hosts:
+                hosts.append(candidate)
     return hosts
+
+
+def _connect_host(prefer_host, registered_host):
+    if prefer_host and not _is_local_host(prefer_host):
+        return prefer_host
+    return registered_host
+
+
+def nodes_from_registry(nodes, *, connect_host=None):
+    by_port: dict[int, dict] = {}
+    for node in nodes:
+        port = int(node["port"])
+        if port in by_port:
+            continue
+        host = _connect_host(connect_host, node["host"])
+        entry = {"host": host, "port": port}
+        pem = node.get("public_key_pem")
+        if pem:
+            entry["public_key_pem"] = pem
+        by_port[port] = entry
+    return [by_port[port] for port in sorted(by_port)]
+
+
+def _node_entry(node, *, connect_host=None):
+    host = _connect_host(connect_host, node["host"])
+    entry = {"host": host, "port": int(node["port"])}
+    pem = node.get("public_key_pem")
+    if pem:
+        entry["public_key_pem"] = pem
+    return entry
+
+
+def keep_live_nodes(nodes, *, timeout=CONNECT_TIMEOUT):
+    if not nodes:
+        return []
+
+    def check(node):
+        if probe_port(node["host"], node["port"], timeout=timeout):
+            return node
+        return None
+
+    workers = min(len(nodes), 16)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        live = [item for item in pool.map(check, nodes) if item]
+    return sorted(live, key=lambda item: item["port"])
+
+
+def exit_from_registry(servers, *, connect_host=None, prefer_port=None):
+    host = _connect_host(connect_host, DEFAULT_HOST)
+    if prefer_port is not None:
+        preferred = {"host": host, "port": int(prefer_port)}
+        for pick in servers or []:
+            if int(pick["port"]) == int(prefer_port) and pick.get("public_key_pem"):
+                preferred["public_key_pem"] = pick["public_key_pem"]
+                break
+        if probe_port(preferred["host"], preferred["port"], timeout=CONNECT_TIMEOUT):
+            return preferred
+    if not servers:
+        return None
+    ordered = sorted(
+        servers,
+        key=lambda item: (
+            0 if prefer_port is not None and int(item["port"]) == prefer_port else 1,
+            int(item["port"]),
+        ),
+    )
+    for pick in ordered:
+        entry = _node_entry(pick, connect_host=connect_host)
+        if probe_port(entry["host"], entry["port"], timeout=CONNECT_TIMEOUT):
+            return entry
+    return None
 
 
 def filter_live_relays(nodes, *, prefer_host=None):
@@ -137,7 +223,7 @@ def filter_live_relays(nodes, *, prefer_host=None):
     for port in sorted(by_port):
         registered = by_port[port]
         for host in _probe_hosts(next(iter(registered)), prefer_host):
-            result = probe_port(host, port)
+            result = probe_port(host, port, timeout=0.2)
             if result and result[0] == "node":
                 live.append({"host": host, "port": result[1]})
                 break
@@ -168,26 +254,61 @@ def discover_network(
     scan_start=DEFAULT_SCAN_START,
     scan_end=DEFAULT_SCAN_END,
     exit_port=None,
+    use_scan=False,
 ):
-    reg_nodes, reg_servers = [], []
+    timing = os.environ.get("ONION_TIMING", "1") != "0"
     if use_registry:
+        t0 = time.perf_counter()
         try:
             reg_nodes, reg_servers = fetch_from_registry(registry_host, registry_port)
-        except (OSError, RuntimeError):
-            pass
-    scan_nodes, scan_server = scan_network(scan_host, scan_start, scan_end)
-    nodes = filter_live_relays(
-        _merge_nodes(reg_nodes, scan_nodes),
-        prefer_host=scan_host,
-    )
-    server = pick_live_exit(
-        reg_servers, prefer_host=scan_host, prefer_port=exit_port
-    )
-    if server is None and scan_server:
-        server = pick_live_exit(
-            [scan_server], prefer_host=scan_host, prefer_port=exit_port
+        except (OSError, RuntimeError) as exc:
+            raise RuntimeError(
+                f"cannot reach directory at {registry_host}:{registry_port}"
+            ) from exc
+        t1 = time.perf_counter()
+        nodes = keep_live_nodes(
+            nodes_from_registry(reg_nodes, connect_host=scan_host)
         )
-    return nodes, server
+        t2 = time.perf_counter()
+        server = exit_from_registry(
+            reg_servers, connect_host=scan_host, prefer_port=exit_port
+        )
+        t3 = time.perf_counter()
+        if timing:
+            print(
+                f"[timing] registry list {(t1 - t0) * 1000:.0f}ms, "
+                f"relay live-probe {(t2 - t1) * 1000:.0f}ms ({len(reg_nodes)} listed -> {len(nodes)} live), "
+                f"exit probe {(t3 - t2) * 1000:.0f}ms"
+            )
+        if use_scan and (len(nodes) < MIN_RELAY_NODES or server is None):
+            scan_nodes, scan_server = scan_network(
+                scan_host, scan_start, scan_end, timeout=0.2
+            )
+            nodes = filter_live_relays(
+                _merge_nodes(nodes, scan_nodes),
+                prefer_host=scan_host,
+            )
+            if server is None and scan_server:
+                server = pick_live_exit(
+                    [scan_server], prefer_host=scan_host, prefer_port=exit_port
+                )
+        return nodes, server
+
+    if use_scan:
+        scan_nodes, scan_server = scan_network(
+            scan_host, scan_start, scan_end, timeout=0.2
+        )
+        nodes = filter_live_relays(scan_nodes, prefer_host=scan_host)
+        server = None
+        if scan_server:
+            server = pick_live_exit(
+                [scan_server], prefer_host=scan_host, prefer_port=exit_port
+            )
+        return nodes, server
+
+    raise RuntimeError(
+        "discovery uses the directory registry; start registry.py on the network host"
+    )
 
 
 def format_network_listing(nodes, server):
@@ -209,12 +330,13 @@ def scan_network(
     host=DEFAULT_HOST,
     start=DEFAULT_SCAN_START,
     end=DEFAULT_SCAN_END,
+    timeout=0.2,
 ):
     nodes = []
     server = None
 
     for port in range(start, end + 1):
-        result = probe_port(host, port)
+        result = probe_port(host, port, timeout=timeout)
         if not result:
             continue
         kind, found_port = result
