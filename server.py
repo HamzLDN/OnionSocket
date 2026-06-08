@@ -1,34 +1,52 @@
-import socket
-import threading
+#!/usr/bin/env python3
+from src.server import (
+    ClientDisconnected,
+    accept,
+    close,
+    create,
+    format_sessions,
+    listen,
+    receive,
+    send,
+)
 
 
-class TCPServer:
-    def __init__(self, host="localhost", port=10003):
-        self.server_address = (host, port)
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.bind(self.server_address)
-        self.server_socket.listen(5)
+def main():
+    srv = create(port=10004, quiet=True)
+    listen(srv)
+    print(f"Server started on port {srv.port}")
+    while True:
+        conn = accept(srv)
+        print(f"Connection #{conn.conn_id} from {conn.addr[0]}:{conn.addr[1]}")
 
-    def start(self):
         try:
-            print("Waiting for a connection...")
-            client_socket, client_address = self.server_socket.accept()
-            while True:
+            message = receive(srv, conn)
+            if message is None:
+                continue
 
-                data = client_socket.recv(4096)
-                if not data:
-                    client_socket.close()
-                    self.server_socket.close()
-                    break
-                else:
-                    print("SENDING DATA", data)
-                    client_socket.send(data)
+            if conn.session is None:
+                print(f"[unknown] {message.decode('utf-8', errors='replace')}")
+            elif conn.session_is_new:
+                print(f"New session {conn.session.label}")
+                print(
+                    f"[{conn.session.label}] {message.decode('utf-8', errors='replace')}"
+                )
+            else:
+                print(
+                    f"[{conn.session.label}] {message.decode('utf-8', errors='replace')}"
+                )
 
+            print(format_sessions(srv))
+            send(srv, conn, message)
+        except ClientDisconnected as e:
+            if conn.session is not None:
+                print(f"{conn.session.label} disconnected ({e})")
+            else:
+                print(e)
+            print(format_sessions(srv))
+        finally:
+            close(conn)
 
-        except KeyboardInterrupt:
-            print("\nShutting down the server...")
-            self.server_socket.close()
 
 if __name__ == "__main__":
-    server = TCPServer(host="localhost", port=10003)
-    server.start()
+    main()
