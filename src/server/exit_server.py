@@ -40,6 +40,7 @@ class ClientConnection:
         self.conn_id = conn_id
         self.stats_id = None
         self.public_key = None
+        self.dest = None
         self.session = None
         self.session_is_new = False
 
@@ -201,12 +202,13 @@ class ExitServer:
                 continue
 
             if self.secure:
-                message, public_key = self.parse_incoming_secure(data)
+                message, public_key, dest = self.parse_incoming_secure(data)
             else:
-                message, public_key = self.parse_incoming(data)
+                message, public_key, dest = self.parse_incoming(data)
 
             if public_key is not None:
                 conn.public_key = public_key
+                conn.dest = dest
                 conn.session, conn.session_is_new = self._get_or_create_session(
                     public_key, conn.addr
                 )
@@ -322,22 +324,28 @@ class ExitServer:
     def parse_incoming(self, data):
         if len(data) >= RSA_CIPHERTEXT_LEN:
             try:
-                client_pem, message = open_from_server(self.private_key, data)
+                client_pem, dest_host, dest_port, message = open_from_server(
+                    self.private_key, data
+                )
                 if client_pem is not None:
-                    return message, rsa.load_public_key(client_pem)
+                    dest = (dest_host, dest_port) if dest_host else None
+                    return message, rsa.load_public_key(client_pem), dest
             except Exception:
                 pass
-        return data, None
+        return data, None, None
 
     def parse_incoming_secure(self, data):
         if len(data) >= RSA_CIPHERTEXT_LEN:
             try:
-                client_pem, message = open_padded_from_server(self.private_key, data)
+                client_pem, dest_host, dest_port, message = open_padded_from_server(
+                    self.private_key, data
+                )
                 if client_pem is not None:
-                    return message, rsa.load_public_key(client_pem)
+                    dest = (dest_host, dest_port) if dest_host else None
+                    return message, rsa.load_public_key(client_pem), dest
             except Exception:
                 pass
-        return data, None
+        return data, None, None
 
     def _drop_session(self, conn: ClientConnection):
         if conn.session is None:

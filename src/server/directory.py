@@ -97,6 +97,7 @@ class Directory:
         public_key = payload.get("public_key")
         key = self._key(service_type, host, port)
         with self.lock:
+            is_new = key not in self.entries
             if service_type == SERVICE_EXIT:
                 stale = [
                     entry_key
@@ -114,7 +115,13 @@ class Directory:
                 "public_key": public_key,
                 "last_seen": time.time(),
             }
-        self._log(f"Registered {service_type} {host}:{port}")
+        # Nodes re-register periodically to stay alive and to self-heal across
+        # directory restarts; only log the first time we see one (or in verbose
+        # mode) so the steady-state refreshes don't spam the log.
+        if is_new:
+            self._log(f"Registered {service_type} {host}:{port}")
+        elif self.verbose:
+            self._log(f"Refreshed {service_type} {host}:{port}")
 
     def heartbeat(self, payload, *, peer=None):
         service_type = self._normalize_type(payload.get("type"))

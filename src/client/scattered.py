@@ -45,8 +45,9 @@ class Scattered:
         registry_host=DEFAULT_HOST,
         registry_port=DEFAULT_REGISTRY_PORT,
         use_registry=True,
-        server_host=None,
-        server_port=None,
+        dest_host=None,
+        dest_port=None,
+        exit_port=None,
         scan_host=DEFAULT_HOST,
         scan_start=DEFAULT_SCAN_START,
         scan_end=DEFAULT_SCAN_END,
@@ -61,8 +62,12 @@ class Scattered:
         self.registry_host = registry_host
         self.registry_port = registry_port
         self.use_registry = use_registry
-        self.server_host = server_host
-        self.server_port = server_port
+        # dest_host/dest_port = the destination server the client wants to reach.
+        # It is encrypted inside the onion; only the exit decrypts and connects to it.
+        self.dest_host = dest_host
+        self.dest_port = dest_port
+        # exit_port = optionally prefer a specific exit from the registry.
+        self.exit_port = exit_port
         self.scan_host = scan_host
         self.scan_start = scan_start
         self.scan_end = scan_end
@@ -79,32 +84,30 @@ class Scattered:
         self._closed = False
 
     def load_network(self):
-        nodes, server = discover_network(
+        nodes, exit_node = discover_network(
             registry_host=self.registry_host,
             registry_port=self.registry_port,
             use_registry=self.use_registry,
             scan_host=self.scan_host,
             scan_start=self.scan_start,
             scan_end=self.scan_end,
-            exit_port=self.server_port,
+            exit_port=self.exit_port,
             use_scan=not self.use_registry,
         )
-        if server is None:
+        if exit_node is None:
             raise RuntimeError(
                 "no exit node found in registry (start exit.py first)"
             )
-        if self.server_host is not None:
-            server = {**server, "host": self.server_host}
-        if self.server_port is not None and int(server["port"]) != self.server_port:
+        if self.exit_port is not None and int(exit_node["port"]) != self.exit_port:
             raise RuntimeError(
-                f"registry has no exit on port {self.server_port} "
-                f"(found {server['port']} instead — restart exit.py on {self.server_port})"
+                f"registry has no exit on port {self.exit_port} "
+                f"(found {exit_node['port']} instead — restart exit.py on {self.exit_port})"
             )
         if len(nodes) < self.min_nodes:
             raise RuntimeError(
                 f"registry has {len(nodes)} relays, need at least {self.min_nodes}"
             )
-        return nodes, server
+        return nodes, exit_node
 
     def _timing(self):
         return os.environ.get("ONION_TIMING", "1") != "0"
@@ -174,8 +177,14 @@ class Scattered:
             return self.receive_all()
         if self._sock is None:
             self.connect()
+        dest_host = self.dest_host or self._server_info["host"]
+        dest_port = self.dest_port or self._server_info["port"]
         sealed = seal_for_server(
-            self._server_info["public_key"], self.public_key_pem, data
+            self._server_info["public_key"],
+            self.public_key_pem,
+            dest_host,
+            dest_port,
+            data,
         )
         if not self._onion_sent:
             self.coms.send(self._sock, CLIENT_ONION)
@@ -223,24 +232,30 @@ class Scattered:
             return sealed
 
     def _send_secure(self, data: bytes) -> list[bytes]:
-        nodes, server_info = self.prepare_network()
+        nodes, exit_info = self.prepare_network()
         chain, entry, _, _ = select_random_relay_chain(
             nodes,
-            server_info,
+            exit_info,
             num_nodes=self.num_nodes,
             min_nodes=self.min_nodes,
             use_all=self.use_all,
         )
         full_chain = chain
 
+        dest_host = self.dest_host or exit_info["host"]
+        dest_port = self.dest_port or exit_info["port"]
+
         if data != CLIENT_CLOSE:
-            path = [n["port"] for n in full_chain] + [server_info["port"]]
-            print(f"  circuit: {' -> '.join(map(str, path))}")
+            path = [n["port"] for n in full_chain] + [exit_info["port"]]
+            print(
+                f"  circuit: {' -> '.join(map(str, path))} "
+                f"(exit) -> {dest_host}:{dest_port} (server)"
+            )
 
         sealed = seal_padded_for_server(
-            server_info["public_key"], self.public_key_pem, data
+            exit_info["public_key"], self.public_key_pem, dest_host, dest_port, data
         )
-        onion_blob = build_onion(full_chain, server_info, sealed)
+        onion_blob = build_onion(full_chain, exit_info, sealed)
 
         timing = self._timing() and data != CLIENT_CLOSE
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

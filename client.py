@@ -4,10 +4,14 @@ from src.core.discovery import format_network_listing
 
 
 def main():
-    # server_port = the port your server.py (or exit.py) is running on
+    # network_host = machine running the registry, relays, and exit.
+    # server_host/server_port = the DESTINATION server you want to reach.
+    #   This address is encrypted inside the onion; only the exit decrypts it
+    #   and connects there. The relays never see it.
     s = client.create(
         network_host="192.168.0.2",
-        server_port=10004,
+        server_host="192.168.0.2",
+        server_port=10005,
     )
 
     try:

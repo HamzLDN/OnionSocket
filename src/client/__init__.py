@@ -18,6 +18,7 @@ def create(
     server_host=None,
     server_port=None,
     network_host=None,
+    exit_port=None,
     nodes=None,
     min_nodes=MIN_RELAY_NODES,
     secure=True,
@@ -31,13 +32,15 @@ def create(
     scan_start=DEFAULT_SCAN_START,
     scan_end=DEFAULT_SCAN_END,
 ) -> Scattered:
+    # server_host/server_port = the destination server the client wants to reach.
+    # It is encrypted inside the onion; only the exit decrypts it and connects.
+    # The exit itself is discovered from the registry (optionally pinned via exit_port).
     remote = network_host or server_host
-    if server_host is None and remote is not None:
-        server_host = remote
     if registry_host is None:
         registry_host = remote or DEFAULT_HOST
     if scan_host is None:
         scan_host = remote or DEFAULT_HOST
+    dest_host = server_host or remote
     return Scattered(
         secure=secure and not insecure,
         num_nodes=nodes,
@@ -46,8 +49,9 @@ def create(
         registry_host=registry_host,
         registry_port=registry_port,
         use_registry=use_registry and not scan,
-        server_host=server_host,
-        server_port=server_port,
+        dest_host=dest_host,
+        dest_port=server_port,
+        exit_port=exit_port,
         scan_host=scan_host,
         scan_start=scan_start,
         scan_end=scan_end,
@@ -71,6 +75,7 @@ def from_args(args) -> Scattered:
         network_host=args.network_host,
         server_host=args.server_host,
         server_port=args.server_port,
+        exit_port=args.exit_port,
         nodes=args.nodes or args.min_nodes,
         min_nodes=args.min_nodes,
         insecure=args.insecure,
@@ -97,8 +102,18 @@ def main():
     )
     parser.add_argument("--registry-host", default=None)
     parser.add_argument("--registry-port", type=int, default=DEFAULT_REGISTRY_PORT)
-    parser.add_argument("--server-host", default=None)
-    parser.add_argument("--server-port", type=int, default=None)
+    parser.add_argument(
+        "--server-host", default=None, help="destination server host (reached via the exit)"
+    )
+    parser.add_argument(
+        "--server-port", type=int, default=None, help="destination server port"
+    )
+    parser.add_argument(
+        "--exit-port",
+        type=int,
+        default=None,
+        help="optionally pin which exit (from the registry) to route through",
+    )
     parser.add_argument("--scan", action="store_true")
     parser.add_argument("--scan-host", default=DEFAULT_HOST)
     parser.add_argument("--scan-start", type=int, default=DEFAULT_SCAN_START)

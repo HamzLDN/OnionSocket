@@ -8,9 +8,10 @@ from src.core.protocol import (
     DEFAULT_HOST,
     DEFAULT_REGISTRY_PORT,
     REGISTRY_HEARTBEAT,
-    REGISTRY_HEARTBEAT_INTERVAL,
     REGISTRY_LIST,
     REGISTRY_REGISTER,
+    REGISTRY_REGISTER_INTERVAL,
+    REGISTRY_RETRY_INTERVAL,
 )
 
 
@@ -110,6 +111,7 @@ def start_registration_loop(
     registry_port=DEFAULT_REGISTRY_PORT,
 ):
     def loop():
+        connected = False
         while True:
             try:
                 register_service(
@@ -120,19 +122,18 @@ def start_registration_loop(
                     registry_host=registry_host,
                     registry_port=registry_port,
                 )
-                print(f"Registered with directory {registry_host}:{registry_port}")
-                while True:
-                    time.sleep(REGISTRY_HEARTBEAT_INTERVAL)
-                    send_heartbeat(
-                        service_type=service_type,
-                        host=host,
-                        port=port,
-                        registry_host=registry_host,
-                        registry_port=registry_port,
-                    )
+                if not connected:
+                    print(f"Registered with directory {registry_host}:{registry_port}")
+                    connected = True
+                time.sleep(REGISTRY_REGISTER_INTERVAL)
             except Exception as e:
-                print(f"Directory retry: {e}")
-                time.sleep(5)
+                if connected:
+                    print(
+                        f"Lost directory {registry_host}:{registry_port} ({e}); "
+                        f"retrying every {REGISTRY_RETRY_INTERVAL}s"
+                    )
+                    connected = False
+                time.sleep(REGISTRY_RETRY_INTERVAL)
 
     threading.Thread(target=loop, daemon=True).start()
 
