@@ -12,9 +12,11 @@ from src.server import (
 
 
 def main():
-    srv = create(port=10004, quiet=True)
+    srv = create(host="0.0.0.0", port=10004, quiet=True)
     listen(srv)
-    print(f"Server started on port {srv.port}")
+    print(f"Listening on {srv.host}:{srv.port}")
+    if srv.host in ("0.0.0.0", "::"):
+        print(f"Reachable at {srv.advertise_host}:{srv.port}")
     while True:
         conn = accept(srv)
         print(f"Connection #{conn.conn_id} from {conn.addr[0]}:{conn.addr[1]}")

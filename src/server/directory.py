@@ -76,6 +76,16 @@ class Directory:
         public_key = payload.get("public_key")
         key = self._key(service_type, host, port)
         with self.lock:
+            if service_type == SERVICE_EXIT:
+                stale = [
+                    entry_key
+                    for entry_key, entry in self.entries.items()
+                    if entry["type"] == SERVICE_EXIT
+                    and entry["host"] == host
+                    and entry["port"] != port
+                ]
+                for entry_key in stale:
+                    del self.entries[entry_key]
             self.entries[key] = {
                 "type": service_type,
                 "host": host,

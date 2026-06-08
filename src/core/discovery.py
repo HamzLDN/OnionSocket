@@ -15,7 +15,7 @@ from src.core.protocol import (
 from src.core.registry_client import list_services
 
 
-def probe_port(host, port, timeout=0.3):
+def probe_port(host, port, timeout=0.8):
     coms = tcp_enhancer.coms()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
@@ -85,8 +85,25 @@ def fetch_from_registry(
     timeout=2.0,
 ):
     nodes, servers = list_services(registry_host, registry_port, timeout)
-    server = servers[0] if servers else None
-    return nodes, server
+    return nodes, servers
+
+
+def pick_live_exit(servers, *, prefer_host=None, prefer_port=None):
+    if not servers:
+        return None
+    ordered = sorted(
+        servers,
+        key=lambda item: (
+            0 if prefer_port is not None and int(item["port"]) == prefer_port else 1,
+            item["host"],
+            item["port"],
+        ),
+    )
+    for entry in ordered:
+        live = resolve_live_exit(entry, prefer_host=prefer_host)
+        if live:
+            return live
+    return None
 
 
 def _merge_nodes(*lists):
@@ -150,11 +167,12 @@ def discover_network(
     scan_host=DEFAULT_HOST,
     scan_start=DEFAULT_SCAN_START,
     scan_end=DEFAULT_SCAN_END,
+    exit_port=None,
 ):
-    reg_nodes, reg_server = [], None
+    reg_nodes, reg_servers = [], []
     if use_registry:
         try:
-            reg_nodes, reg_server = fetch_from_registry(registry_host, registry_port)
+            reg_nodes, reg_servers = fetch_from_registry(registry_host, registry_port)
         except (OSError, RuntimeError):
             pass
     scan_nodes, scan_server = scan_network(scan_host, scan_start, scan_end)
@@ -162,10 +180,13 @@ def discover_network(
         _merge_nodes(reg_nodes, scan_nodes),
         prefer_host=scan_host,
     )
-    server = (
-        resolve_live_exit(reg_server, prefer_host=scan_host)
-        or resolve_live_exit(scan_server, prefer_host=scan_host)
+    server = pick_live_exit(
+        reg_servers, prefer_host=scan_host, prefer_port=exit_port
     )
+    if server is None and scan_server:
+        server = pick_live_exit(
+            [scan_server], prefer_host=scan_host, prefer_port=exit_port
+        )
     return nodes, server
 
 
@@ -216,7 +237,8 @@ def _chain_count(nodes, server, num_nodes, min_nodes, use_all):
         found = ", ".join(f"{n['host']}:{n['port']}" for n in nodes) or "none"
         raise RuntimeError(
             f"need {count} relay nodes, found {len(nodes)} ({found}). "
-            "Start at least 3 relays (e.g. node.py --port 10001/10002/10003)."
+            "Start relays on the remote machine and point the client at that host "
+            "(e.g. client.create(network_host='192.168.1.100', server_port=10004))."
         )
     return count
 

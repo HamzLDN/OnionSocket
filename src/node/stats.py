@@ -1,19 +1,29 @@
-import resource
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 
+try:
+    import resource
+except ImportError:
+    resource = None
+
 
 def _memory_mb() -> float:
+    if resource is None:
+        return 0.0
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     if sys.platform == "darwin":
+        return rss / (1024 * 1024)
+    if sys.platform == "win32":
         return rss / (1024 * 1024)
     return rss / 1024
 
 
 def _cpu_seconds() -> float:
+    if resource is None:
+        return 0.0
     usage = resource.getrusage(resource.RUSAGE_SELF)
     return usage.ru_utime + usage.ru_stime
 

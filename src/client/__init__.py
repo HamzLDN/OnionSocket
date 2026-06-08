@@ -17,19 +17,27 @@ def create(
     *,
     server_host=None,
     server_port=None,
+    network_host=None,
     nodes=MIN_RELAY_NODES,
     min_nodes=MIN_RELAY_NODES,
     secure=True,
-    registry_host=DEFAULT_HOST,
+    registry_host=None,
     registry_port=DEFAULT_REGISTRY_PORT,
     use_registry=True,
     insecure=False,
     use_all=False,
     scan=False,
-    scan_host=DEFAULT_HOST,
+    scan_host=None,
     scan_start=DEFAULT_SCAN_START,
     scan_end=DEFAULT_SCAN_END,
 ) -> Scattered:
+    remote = network_host or server_host
+    if server_host is None and remote is not None:
+        server_host = remote
+    if registry_host is None:
+        registry_host = remote or DEFAULT_HOST
+    if scan_host is None:
+        scan_host = remote or DEFAULT_HOST
     return Scattered(
         secure=secure and not insecure,
         num_nodes=nodes,
@@ -60,6 +68,7 @@ def close(sock: Scattered):
 
 def from_args(args) -> Scattered:
     return create(
+        network_host=args.network_host,
         server_host=args.server_host,
         server_port=args.server_port,
         nodes=args.nodes or args.min_nodes,
@@ -81,7 +90,12 @@ def main():
     parser.add_argument("--nodes", type=int, default=MIN_RELAY_NODES)
     parser.add_argument("--use-all", action="store_true")
     parser.add_argument("--insecure", action="store_true")
-    parser.add_argument("--registry-host", default=DEFAULT_HOST)
+    parser.add_argument(
+        "--network-host",
+        default=None,
+        help="remote machine running registry, relays, and exit (LAN IP)",
+    )
+    parser.add_argument("--registry-host", default=None)
     parser.add_argument("--registry-port", type=int, default=DEFAULT_REGISTRY_PORT)
     parser.add_argument("--server-host", default=None)
     parser.add_argument("--server-port", type=int, default=None)

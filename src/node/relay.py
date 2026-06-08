@@ -15,6 +15,7 @@ from src.core.protocol import (
     SERVICE_RELAY,
     resolve_advertise_host,
 )
+from src.core.platform import dashboard_available
 from src.core.registry_client import maybe_register
 from src.node.dashboard import NodeDashboard
 from src.node.stats import NodeStats
@@ -260,6 +261,11 @@ class RelayNode:
             self.server_socket.close()
 
     def run_with_dashboard(self):
+        if not dashboard_available():
+            if not self.quiet:
+                print("Dashboard unavailable on this platform, using plain mode.")
+            self.start()
+            return
         stop_event = threading.Event()
         threading.Thread(target=self.start, args=(stop_event,), daemon=True).start()
         NodeDashboard(self.stats, stop_event).run()

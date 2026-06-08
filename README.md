@@ -186,6 +186,35 @@ queue(srv, "see you later", session=conn.session)
 queue(srv, "see you later", sid=1)
 ```
 
+## Connecting from another machine (e.g. Windows → Mac)
+
+Everything (directory, relays, exit) must run on the **Mac**. Nodes bind to `0.0.0.0` so they accept LAN connections.
+
+On the **Windows** client, point at the Mac's LAN IP for **all** discovery — not just the exit:
+
+```python
+s = client.create(
+    network_host="192.168.1.100",  # Mac LAN IP
+    server_port=10004,
+    nodes=3,
+)
+```
+
+`network_host` sets the registry, port scan, and exit lookup to that machine. Setting only `server_host` is not enough — relays were previously searched on `localhost`.
+
+**Checklist if it still fails:**
+
+1. Mac firewall allows incoming Python (System Settings → Network → Firewall)
+2. `registry.py`, 3× `node.py`, and `exit.py` are all running on the Mac
+3. From Windows: `ping 192.168.1.100` works
+4. Mac and Windows are on the same subnet (both `192.168.1.x`)
+
+## Windows
+
+- **Client** works on Windows (Python 3.10+ and `cryptography`)
+- **Relay/exit dashboards** fall back to plain text logs (curses is not used on Windows)
+- Run nodes with `--plain` on Windows: `python node.py --port 10001 --plain`
+
 ## Notes
 
 - This is a **lab project**, not production Tor. The last relay sees the server; return traffic is not re-onioned.

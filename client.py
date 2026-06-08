@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
 from src import client
+from src.core.discovery import format_network_listing
 
 
 def main():
-    s = client.create(nodes=3)
+    # server_port = exit node (exit.py), not server.py
+    s = client.create(
+        network_host="192.168.0.2",
+        server_port=10004,
+        nodes=3,
+    )
+
+    nodes, server = s.load_network()
+    print(format_network_listing(nodes, server))
+    print()
 
     try:
         for text in ("hello", "second message"):

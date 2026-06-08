@@ -23,6 +23,7 @@ from src.core.protocol import (
     SERVICE_EXIT,
     resolve_advertise_host,
 )
+from src.core.platform import dashboard_available
 from src.core.registry_client import maybe_register
 from src.core.secure_transport import pack_server_replies
 
@@ -398,6 +399,11 @@ class ExitServer:
                 conn.close()
 
     def run_with_dashboard(self, *, echo_handler=None):
+        if not dashboard_available():
+            if not self.quiet:
+                print("Dashboard unavailable on this platform, using plain mode.")
+            self.serve_forever(echo_handler=echo_handler)
+            return
         stop_event = threading.Event()
         threading.Thread(
             target=self.serve_forever,

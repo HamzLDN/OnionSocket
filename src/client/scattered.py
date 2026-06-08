@@ -84,17 +84,22 @@ class Scattered:
             scan_host=self.scan_host,
             scan_start=self.scan_start,
             scan_end=self.scan_end,
+            exit_port=self.server_port,
         )
         if self.server_host is not None and self.server_port is not None:
             explicit = {"host": self.server_host, "port": self.server_port}
             if server and int(server.get("port", -1)) == self.server_port:
                 if server.get("public_key_pem"):
                     explicit["public_key_pem"] = server["public_key_pem"]
-            live = resolve_live_exit(explicit, prefer_host=self.scan_host)
+            live = resolve_live_exit(
+                explicit, prefer_host=self.server_host or self.scan_host
+            )
+            if live is None and server is not None:
+                live = server
             if live is None:
                 raise RuntimeError(
                     f"exit node not reachable at {self.server_host}:{self.server_port} "
-                    "(start exit.py or server.py on that port first)"
+                    f"(is exit.py running on that port?)"
                 )
             server = live
         elif server is None:
