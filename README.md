@@ -187,7 +187,9 @@ queue(srv, "see you later", sid=1)
 ```
 
 ## Connecting from another machine (e.g. Windows → Mac)
-- NOT TESTED ON LINUX: TESTED ONLY ON WINDOWS AND MACOS
+**NOT TESTED ON LINUX: TESTED ONLY ON WINDOWS AND MACOS**
+
+  
 Everything (directory, relays, exit) must run on the **Mac**. Nodes bind to `0.0.0.0` so they accept LAN connections.
 
 On the **Windows** client, point at the Mac's LAN IP for **all** discovery — not just the exit:
