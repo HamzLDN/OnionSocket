@@ -107,3 +107,35 @@ def open_padded_client_reply(client_private_key, sealed: bytes) -> bytes:
     from src.core.secure_transport import unpad_payload
 
     return unpad_payload(open_client_reply(client_private_key, sealed))
+
+
+STREAM_FRAME = b"\x01"
+STREAM_KEY_BYTES = 32
+
+
+def pack_stream_keys(c2e_key: bytes, e2c_key: bytes) -> bytes:
+    return c2e_key + e2c_key
+
+
+def parse_stream_keys(message: bytes) -> tuple[bytes | None, bytes | None]:
+    if len(message) != STREAM_KEY_BYTES:
+        return None, None
+    return message[:16], message[16:]
+
+
+def seal_stream(key: bytes, data: bytes) -> bytes:
+    from src.core.symmetric import aes
+
+    return STREAM_FRAME + aes.encrypt(data, key)
+
+
+def open_stream_data(key: bytes, framed: bytes) -> bytes:
+    from src.core.symmetric import aes
+
+    if not framed.startswith(STREAM_FRAME):
+        raise ValueError("not a stream frame")
+    return aes.decrypt(framed[len(STREAM_FRAME) :], key)
+
+
+def is_stream_frame(data: bytes) -> bool:
+    return data.startswith(STREAM_FRAME)

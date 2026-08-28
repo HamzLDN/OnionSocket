@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 
-from src.client.scattered import Scattered
+from src.client.scattered import Scattered, StreamCircuit
 from src.core.protocol import (
     DEFAULT_HOST,
     DEFAULT_REGISTRY_PORT,
@@ -10,7 +10,7 @@ from src.core.protocol import (
     MIN_RELAY_NODES,
 )
 
-__all__ = ["Scattered", "create", "send", "receive", "close"]
+__all__ = ["Scattered", "StreamCircuit", "create", "send", "receive", "close", "open_stream"]
 
 
 def create(
@@ -70,6 +70,10 @@ def close(sock: Scattered):
     sock.close()
 
 
+def open_stream(sock: Scattered, dest_host: str, dest_port: int, *, verbose=False) -> StreamCircuit:
+    return sock.open_stream(dest_host, dest_port, verbose=verbose)
+
+
 def from_args(args) -> Scattered:
     return create(
         network_host=args.network_host,
@@ -119,7 +123,40 @@ def main():
     parser.add_argument("--scan-start", type=int, default=DEFAULT_SCAN_START)
     parser.add_argument("--scan-end", type=int, default=DEFAULT_SCAN_END)
     parser.add_argument("--send", help="send one message and print replies")
+    parser.add_argument(
+        "--proxy",
+        action="store_true",
+        help="run local HTTP proxy (browser -> onion network -> web)",
+    )
+    parser.add_argument("--proxy-host", default="127.0.0.1")
+    parser.add_argument("--proxy-port", type=int, default=8080)
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
+
+    if args.proxy:
+        from src.proxy.local_proxy import run_local_proxy
+
+        sock = create(
+            network_host=args.network_host,
+            registry_host=args.registry_host,
+            registry_port=args.registry_port,
+            exit_port=args.exit_port,
+            nodes=args.nodes or args.min_nodes,
+            min_nodes=args.min_nodes,
+            use_all=args.use_all,
+            insecure=True,
+            scan=args.scan,
+            scan_host=args.scan_host,
+            scan_start=args.scan_start,
+            scan_end=args.scan_end,
+        )
+        run_local_proxy(
+            sock,
+            host=args.proxy_host,
+            port=args.proxy_port,
+            verbose=args.verbose,
+        )
+        return
 
     if (args.server_host is None) ^ (args.server_port is None):
         parser.error("use --server-host and --server-port together")

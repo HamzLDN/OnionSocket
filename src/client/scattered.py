@@ -16,13 +16,20 @@ from src.core.discovery import (
 from src.core.e2e import (
     open_client_reply,
     open_padded_client_reply,
+    open_stream_data,
+    pack_stream_keys,
     seal_for_server,
     seal_padded_for_server,
+    seal_stream,
+    is_stream_frame,
 )
+from src.core.symmetric import aes
+from src.core.tunnel_mux import TUNNEL_DEST, TUNNEL_PORT
 from src.core.onion import build_onion
 from src.core.protocol import (
     CLIENT_CLOSE,
     CLIENT_ONION,
+    CLIENT_STREAM,
     CONNECT_TIMEOUT,
     DEFAULT_HOST,
     DEFAULT_REGISTRY_PORT,
@@ -32,6 +39,73 @@ from src.core.protocol import (
     RECV_TIMEOUT,
 )
 from src.core.secure_transport import unpack_server_replies
+
+
+class StreamCircuit:
+    """Bidirectional stream through an onion circuit (for web proxy)."""
+
+    def __init__(self, sock, coms, exit_pubkey, private_key, c2e_key, e2c_key):
+        self._sock = sock
+        self._coms = coms
+        self._exit_pubkey = exit_pubkey
+        self._private_key = private_key
+        self._c2e_key = c2e_key
+        self._e2c_key = e2c_key
+        self._active = True
+        self._closed = False
+        self._queue = queue.Queue()
+        self._thread = threading.Thread(target=self._recv_loop, daemon=True)
+        self._thread.start()
+
+    @property
+    def active(self) -> bool:
+        return self._active and not self._closed
+
+    def send(self, data: bytes):
+        if not data or not self.active:
+            return
+        framed = seal_stream(self._c2e_key, data)
+        self._coms.send(self._sock, framed)
+
+    def recv(self, timeout=None) -> bytes | None:
+        try:
+            return self._queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        self._active = False
+        try:
+            self._sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+    def _recv_loop(self):
+        while self._active:
+            try:
+                framed = self._coms.recv(self._sock)
+            except OSError:
+                self._active = False
+                break
+            if framed is None:
+                self._active = False
+                break
+            try:
+                if is_stream_frame(framed):
+                    data = open_stream_data(self._e2c_key, framed)
+                else:
+                    data = open_client_reply(self._private_key, framed)
+            except Exception:
+                continue
+            if data:
+                self._queue.put(data)
 
 
 class Scattered:
@@ -289,4 +363,50 @@ class Scattered:
             msg = self._decrypt_reply(sealed, secure=False)
             if msg is not None:
                 self._insecure_queue.put(msg)
+
+    def open_stream(
+        self, dest_host: str, dest_port: int, *, verbose=False
+    ) -> StreamCircuit:
+        """Open a streaming circuit to dest_host:dest_port through the onion network."""
+        nodes, exit_info = self.prepare_network()
+        chain, entry, _, _ = select_random_relay_chain(
+            nodes,
+            exit_info,
+            num_nodes=self.num_nodes,
+            min_nodes=self.min_nodes,
+            use_all=self.use_all,
+        )
+        if verbose:
+            path = [n["port"] for n in chain] + [exit_info["port"]]
+            print(
+                f"  stream circuit: {' -> '.join(map(str, path))} "
+                f"(exit) -> {dest_host}:{dest_port}"
+            )
+
+        c2e_key = aes.generate_key()
+        e2c_key = aes.generate_key()
+        sealed = seal_for_server(
+            exit_info["public_key"],
+            self.public_key_pem,
+            dest_host,
+            dest_port,
+            pack_stream_keys(c2e_key, e2c_key),
+        )
+        onion_blob = build_onion(chain, exit_info, sealed)
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(CONNECT_TIMEOUT)
+        sock.connect((entry["host"], entry["port"]))
+        tcp_enhancer.set_nodelay(sock)
+        sock.settimeout(None)
+        self.coms.send(sock, CLIENT_STREAM)
+        self.coms.send(sock, onion_blob)
+
+        return StreamCircuit(
+            sock, self.coms, exit_info["public_key"], self.private_key, c2e_key, e2c_key
+        )
+
+    def open_tunnel(self, *, verbose=False) -> StreamCircuit:
+        """Open a multiplexed tunnel (no destination until streams are opened)."""
+        return self.open_stream(TUNNEL_DEST, TUNNEL_PORT, verbose=verbose)
 

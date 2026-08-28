@@ -6,6 +6,7 @@ from src.core.asymmetric import rsa
 from src.core.onion import HOP_SERVER, format_peel_report, peel_layer
 from src.core.protocol import (
     CLIENT_ONION,
+    CLIENT_STREAM,
     CONNECT_TIMEOUT,
     DEFAULT_BIND_HOST,
     DEFAULT_HOST,
@@ -114,6 +115,8 @@ class RelayNode:
                     break
                 next_hop.send(data)
                 self.stats.record_out(self.stats.wire_len(data), conn_id)
+            except socket.timeout:
+                continue
             except Exception:
                 break
 
@@ -127,6 +130,8 @@ class RelayNode:
                     break
                 self.stats.record_in(self.stats.wire_len(data), conn_id)
                 self._track_send(sock, data, conn_id)
+            except socket.timeout:
+                continue
             except Exception:
                 break
 
@@ -225,10 +230,11 @@ class RelayNode:
                 self.stats.close_connection(conn_id)
                 return
 
-            if first == CLIENT_ONION:
+            if first in (CLIENT_ONION, CLIENT_STREAM):
                 self.stats.set_connection_kind(conn_id, "onion")
                 self.stats.note_client_circuit()
-                self.stats.event(f"Onion circuit from {addr[0]}:{addr[1]}")
+                kind = "stream" if first == CLIENT_STREAM else "onion"
+                self.stats.event(f"{kind} circuit from {addr[0]}:{addr[1]}")
                 self.handle_onion_client(sock, conn_id)
                 return
 
