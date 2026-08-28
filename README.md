@@ -2,7 +2,7 @@
 
 A small Python lab for onion-style routing over TCP. Traffic hops through relay nodes before reaching an exit node. Messages are end-to-end encrypted so relays only peel routing layers — they never see the plaintext.
 
-Built for learning: directory registration, circuit building, padded payloads, and a socket-style server API.
+Built for learning: directory registration, circuit building, padded payloads, a socket-style server API, and **web browsing** through a local HTTP proxy.
 
 ## Requirements
 
@@ -18,19 +18,23 @@ pip install -r requirements.txt
 
 ```
 OnionSocket/
+├── start_network.sh     # start/stop the full network (+ optional web proxy)
 ├── registry.py          # directory server (relay + exit registry)
 ├── node.py              # relay node CLI
-├── exit.py              # exit node CLI
+├── exit.py              # exit node CLI (web proxy enabled by default)
 ├── server.py            # optional session API demo (--as-exit)
-├── client.py            # client example
+├── client.py            # client example / local web proxy
 └── src/
-    ├── client/          # Scattered client (create, send, receive, close)
+    ├── client/          # Scattered client (create, send, open_stream, close)
     ├── node/            # RelayNode + ExitNode
+    ├── proxy/           # local HTTP CONNECT proxy + exit stream relay
     ├── server/          # exit node API + directory
-    └── core/            # onion, e2e crypto, discovery, protocol
+    └── core/            # onion, e2e crypto, discovery, protocol, tunnel mux
 ```
 
 ## How it fits together
+
+**Chat / message mode** — one onion circuit per message:
 
 ```
 client  →  relay  →  relay  →  relay  →  exit node
@@ -38,22 +42,85 @@ client  →  relay  →  relay  →  relay  →  exit node
          peel onion layers (cannot read message)
 ```
 
+**Web browsing** — one shared onion tunnel, many browser connections multiplexed over it:
+
+```
+browser  →  local proxy (:8080)  →  relay  →  relay  →  relay  →  exit  →  internet
+                ↑
+           shared onion circuit (new tabs reuse the same tunnel)
+```
+
 1. **Directory** (`registry.py`) — relay and exit nodes register here. The client fetches the list to build circuits.
 2. **Relay nodes** (`node.py`) — forward onion traffic, peeling one layer per hop.
-3. **Exit node** (`exit.py`) — core final hop; decrypts E2E traffic, handles messages, sends replies.
-4. **Client** (`client.py`) — picks random relays, builds a fresh onion per message (secure mode).
+3. **Exit node** (`exit.py`) — final hop; decrypts traffic and either relays messages (chat mode) or streams TCP to destinations (web proxy mode).
+4. **Client** (`client.py`) — builds onion circuits. In proxy mode, runs a local HTTP CONNECT proxy for browser traffic.
 
 Default ports (with 3 relays):
 
-| Service   | Port  |
-|-----------|-------|
-| Directory | 10000 |
-| Relay 1   | 10001 |
-| Relay 2   | 10002 |
-| Relay 3   | 10003 |
-| Exit      | 10004 |
+| Service     | Port  |
+|-------------|-------|
+| Directory   | 10000 |
+| Relay 1     | 10001 |
+| Relay 2     | 10002 |
+| Relay 3     | 10003 |
+| Exit        | 10004 |
+| Web proxy   | 8080  |
 
 ## Quick start
+
+### One command (recommended)
+
+Start the directory, three relays, exit node, and local web proxy:
+
+```bash
+./start_network.sh --proxy
+```
+
+Other commands:
+
+```bash
+./start_network.sh status    # show running services
+./start_network.sh logs      # tail service logs
+./start_network.sh stop      # stop everything
+./start_network.sh restart --proxy
+```
+
+Logs and PID files are written to `.onionsocket-logs/` and `.onionsocket-pids/`.
+
+### Web browsing
+
+With the proxy running, configure your browser to use **HTTP** proxy `127.0.0.1:8080` (not HTTPS proxy).
+
+**FoxyProxy example:**
+
+| Setting  | Value        |
+|----------|--------------|
+| Type     | HTTP         |
+| Host     | `127.0.0.1`  |
+| Port     | `8080`       |
+| Pattern  | `*://*/*`    |
+| Username | *(leave blank)* |
+| Password | *(leave blank)* |
+
+Do **not** browse to `https://localhost:8080` — set the proxy in your browser or extension instead.
+
+Traffic path: `browser → local proxy → onion relays → exit → destination`.
+
+When the network runs on another machine, pass its LAN IP:
+
+```bash
+python3 client.py --proxy --network-host 192.168.1.100
+```
+
+To run the proxy manually (network already up):
+
+```bash
+python3 client.py --proxy
+```
+
+The exit node enables web streaming by default. Use `--no-proxy` on `exit.py` for chat/message mode only.
+
+### Manual setup (six terminals)
 
 Open **six terminals** from the project root (directory, 3 relays, exit node, client).
 
@@ -76,14 +143,10 @@ Each node opens a **green terminal dashboard** with live traffic charts. Use **�
 **Terminal 5 — exit node**
 
 ```bash
-python3 exit.py
+python3 exit.py --plain
 ```
 
-For **web browsing**, start the exit in proxy mode:
-
-```bash
-python3 exit.py --proxy
-```
+Web streaming is enabled by default. Add `--no-proxy` to disable it.
 
 `server.py` runs the application server (sessions, echo). The onion exit is `exit.py` — the client discovers it from the directory. Use `server.py --as-exit` only if you want one process to do both.
 
@@ -93,19 +156,10 @@ python3 exit.py --proxy
 python3 client.py
 ```
 
-For **web browsing**, run the local proxy and point your browser at it:
+For web browsing from a separate terminal (if not using `start_network.sh --proxy`):
 
 ```bash
 python3 client.py --proxy
-```
-
-Then set your browser's HTTP/HTTPS proxy to `127.0.0.1:8080`. Traffic goes:
-`browser → local proxy → onion relays → exit → internet`.
-
-When connecting from another machine, pass the network host:
-
-```bash
-python3 client.py --proxy --network-host 192.168.1.100
 ```
 
 ## Quick demo
@@ -241,4 +295,6 @@ s = client.create(
 
 - This is a **lab project**, not production Tor. The last relay sees the server; return traffic is not re-onioned.
 - Server and nodes bind to `0.0.0.0` by default so they work on LAN; the directory stores an advertised host for discovery.
-- If ports are already in use, stop old processes or change ports in `exit.py` / `server.py` / `client.py` to match.
+- If ports are already in use, run `./start_network.sh stop` or change ports via the script flags / CLI options.
+- Some sites (Google, YouTube) load many subdomains in parallel; the shared tunnel handles these as separate multiplexed streams over one onion circuit.
+- If browsing fails after idle time, restart with `./start_network.sh restart --proxy`.
