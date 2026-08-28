@@ -79,12 +79,33 @@ Each node opens a **green terminal dashboard** with live traffic charts. Use **�
 python3 exit.py
 ```
 
+For **web browsing**, start the exit in proxy mode:
+
+```bash
+python3 exit.py --proxy
+```
+
 `server.py` runs the application server (sessions, echo). The onion exit is `exit.py` — the client discovers it from the directory. Use `server.py --as-exit` only if you want one process to do both.
 
 **Terminal 6 — client**
 
 ```bash
 python3 client.py
+```
+
+For **web browsing**, run the local proxy and point your browser at it:
+
+```bash
+python3 client.py --proxy
+```
+
+Then set your browser's HTTP/HTTPS proxy to `127.0.0.1:8080`. Traffic goes:
+`browser → local proxy → onion relays → exit → internet`.
+
+When connecting from another machine, pass the network host:
+
+```bash
+python3 client.py --proxy --network-host 192.168.1.100
 ```
 
 ## Quick demo
