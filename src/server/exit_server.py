@@ -383,7 +383,13 @@ class ExitServer:
             sealed = seal_for_client(client_public_key, plaintext)
         self._track_send(conn, sealed)
 
-    def serve_forever(self, stop_event: threading.Event | None = None, *, echo_handler=None):
+    def serve_forever(
+        self,
+        stop_event: threading.Event | None = None,
+        *,
+        echo_handler=None,
+        stream_handler=None,
+    ):
         if not self._listening:
             self.listen()
         self.server_socket.settimeout(1.0)
@@ -395,29 +401,32 @@ class ExitServer:
             except OSError:
                 break
             try:
-                message = self.receive(conn)
-                if message is None:
-                    continue
-                if echo_handler is not None:
-                    echo_handler(conn, message)
-                elif self.echo:
-                    self.send(conn, message)
+                if stream_handler is not None:
+                    stream_handler(conn)
+                else:
+                    message = self.receive(conn)
+                    if message is None:
+                        continue
+                    if echo_handler is not None:
+                        echo_handler(conn, message)
+                    elif self.echo:
+                        self.send(conn, message)
             except ClientDisconnected as e:
                 self.stats.event(str(e))
             finally:
                 conn.close()
 
-    def run_with_dashboard(self, *, echo_handler=None):
+    def run_with_dashboard(self, *, echo_handler=None, stream_handler=None):
         if not dashboard_available():
             if not self.quiet:
                 print("Dashboard unavailable on this platform, using plain mode.")
-            self.serve_forever(echo_handler=echo_handler)
+            self.serve_forever(echo_handler=echo_handler, stream_handler=stream_handler)
             return
         stop_event = threading.Event()
         threading.Thread(
             target=self.serve_forever,
             args=(stop_event,),
-            kwargs={"echo_handler": echo_handler},
+            kwargs={"echo_handler": echo_handler, "stream_handler": stream_handler},
             daemon=True,
         ).start()
         NodeDashboard(self.stats, stop_event).run()

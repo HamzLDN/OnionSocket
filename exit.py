@@ -10,13 +10,12 @@ from src.core.protocol import (
     RECV_TIMEOUT,
 )
 from src.node.exit import ExitNode
+from src.proxy.exit_stream import relay_stream, serve_connection
 from src.server import (
     ClientDisconnected,
     accept,
     close,
     listen,
-    receive,
-    send,
 )
 
 _coms = tcp_enhancer.coms()
@@ -74,13 +73,20 @@ if __name__ == "__main__":
         action="store_true",
         help="plain text logs instead of the dashboard",
     )
+    parser.add_argument(
+        "--no-proxy",
+        action="store_true",
+        help="disable web streaming (chat/message mode only)",
+    )
     args = parser.parse_args()
+
+    proxy_enabled = not args.no_proxy
 
     node = ExitNode(
         host=args.host,
         port=args.port,
         verbose=args.verbose,
-        secure=not args.insecure,
+        secure=not args.insecure and not proxy_enabled,
         echo=False,
         advertise_host=args.advertise_host,
         registry_host=args.registry_host,
@@ -89,23 +95,27 @@ if __name__ == "__main__":
         quiet=not args.plain,
     )
 
+    def handle(conn):
+        serve_connection(
+            node,
+            conn,
+            verbose=args.verbose,
+            echo=args.echo,
+            reply_for=reply_for,
+        )
+
     if args.plain:
         listen(node)
         print(f"Exit node listening on {node.host}:{node.port}")
-        print("Destination is decrypted from each client's onion (not hardcoded).")
+        if proxy_enabled:
+            print("Web proxy enabled: streams empty-body circuits; relays messages otherwise.")
+        else:
+            print("Message mode only (web streaming disabled).")
         try:
             while True:
                 conn = accept(node)
                 try:
-                    message = receive(node, conn)
-                    if message is None:
-                        continue
-                    print(f"[exit] got: {message.decode('utf-8', errors='replace')}")
-                    send(
-                        node,
-                        conn,
-                        reply_for(conn, message, echo=args.echo, verbose=args.verbose),
-                    )
+                    handle(conn)
                 except ClientDisconnected as e:
                     print(e)
                 finally:
@@ -115,7 +125,10 @@ if __name__ == "__main__":
             node.close()
     else:
         node.run_with_dashboard(
-            echo_handler=lambda conn, message: node.send(
-                conn, reply_for(conn, message, echo=args.echo, verbose=args.verbose)
-            )
+            stream_handler=handle if proxy_enabled else None,
+            echo_handler=None if proxy_enabled else (
+                lambda conn, message: node.send(
+                    conn, reply_for(conn, message, echo=args.echo, verbose=args.verbose)
+                )
+            ),
         )
